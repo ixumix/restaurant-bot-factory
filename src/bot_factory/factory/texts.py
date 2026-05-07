@@ -19,6 +19,25 @@ def business_type_label(code: str) -> str:
     return BUSINESS_TYPE_LABELS.get(code, code)
 
 
+RESERVATION_STATUS_LABELS: dict[str, str] = {
+    "new": "новая",
+    "confirmed": "подтверждена",
+    "declined": "отклонена",
+    "cancelled": "отменена",
+    "done": "выполнена",
+}
+
+
+RESERVATION_STATUS_ACTIONS: dict[str, str] = {
+    "confirmed": "подтвердил",
+    "declined": "отклонил",
+}
+
+
+def reservation_status_label(status: str) -> str:
+    return RESERVATION_STATUS_LABELS.get(status, status)
+
+
 # ---------------------------------------------------------------------------
 # Static texts
 
@@ -202,10 +221,70 @@ MENU_ITEM_DELETED = "🗑 Позиция удалена."
 # Reservations
 
 NO_RESERVATIONS = "Бронирований пока нет."
+RESERVATION_STATUS_UPDATED = "Статус бронирования обновлён."
+RESERVATION_ALREADY_PROCESSED = "Это бронирование уже обработано."
+RESERVATION_NOT_FOUND = "Бронирование не найдено."
 
 
-def reservation_line(date_iso: str, time_iso: str, party_size: int, name: str, phone: str) -> str:
-    return f"📅 {date_iso} {time_iso} · {party_size} гост. · {name} · {phone}"
+def reservation_line(
+    date_iso: str,
+    time_iso: str,
+    party_size: int,
+    name: str,
+    phone: str,
+    status: str,
+    reservation_id: int | None = None,
+) -> str:
+    prefix = f"#{reservation_id} · " if reservation_id is not None else ""
+    return (
+        f"{prefix}📅 {date_iso} {time_iso} · {party_size} гост. · "
+        f"{name} · {phone} · {reservation_status_label(status)}"
+    )
+
+
+def reservation_status_owner_line(
+    venue_name: str,
+    date_iso: str,
+    time_iso: str,
+    status: str,
+    *,
+    customer_notified: bool,
+) -> str:
+    action = RESERVATION_STATUS_ACTIONS.get(status, "обновил")
+    notify_text = (
+        "Гостю отправлено уведомление."
+        if customer_notified
+        else "Гостю не удалось отправить уведомление автоматически."
+    )
+    return (
+        f"Ты {action} бронь в <b>{venue_name}</b> "
+        f"на {date_iso} в {time_iso}. {notify_text}"
+    )
+
+
+def customer_reservation_status_notification(
+    *,
+    venue_name: str,
+    date_iso: str,
+    time_iso: str,
+    party_size: int,
+    status: str,
+) -> str:
+    label = reservation_status_label(status)
+    if status == "confirmed":
+        lead = "Ваша бронь подтверждена. Ждём вас!"
+    elif status == "declined":
+        lead = "К сожалению, заведение не смогло подтвердить эту бронь."
+    else:
+        lead = f"Статус вашей брони изменён: {label}."
+    return "\n".join(
+        [
+            f"<b>{lead}</b>",
+            f"Заведение: {venue_name}",
+            f"Дата и время: {date_iso} {time_iso}",
+            f"Гостей: {party_size}",
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +307,9 @@ def new_reservation_notification(
         f"👥 Гостей: {party_size}",
         f"👤 Имя: {customer_name}",
         f"📞 Телефон: {customer_phone}",
+        f"Статус: {reservation_status_label('new')}",
     ]
     if comment:
         parts.append(f"💬 Комментарий: {comment}")
+    parts.append("Подтверди или отклони заявку кнопками ниже.")
     return "\n".join(parts)

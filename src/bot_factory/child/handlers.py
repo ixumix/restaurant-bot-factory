@@ -19,6 +19,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..db import repo
+from ..factory import keyboards as factory_keyboards
 from ..factory import texts as factory_texts  # for `new_reservation_notification`
 from ..notifications import Notifier
 from . import keyboards, texts
@@ -221,7 +222,7 @@ def _build_router(
             if tenant is None:
                 await call.answer("Бот временно недоступен")
                 return
-            await repo.create_reservation(
+            reservation = await repo.create_reservation(
                 session,
                 tenant_id=tenant_id,
                 customer_telegram_id=call.from_user.id,
@@ -251,6 +252,10 @@ def _build_router(
                 customer_name=str(data["customer_name"]),
                 customer_phone=str(data["customer_phone"]),
                 comment=data.get("comment"),
+            ),
+            reply_markup=factory_keyboards.reservation_actions_kb(
+                reservation,
+                include_back=False,
             ),
         )
 

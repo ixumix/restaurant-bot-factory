@@ -11,6 +11,7 @@ import logging
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
+from aiogram.types import InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +22,15 @@ class Notifier:
     def __init__(self, factory_bot: Bot) -> None:
         self._bot = factory_bot
 
-    async def notify_owner(self, owner_telegram_id: int, text: str) -> None:
+    async def notify_owner(
+        self,
+        owner_telegram_id: int,
+        text: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> None:
         """Best-effort delivery — log and swallow Telegram errors."""
         try:
-            await self._bot.send_message(owner_telegram_id, text)
+            await self._bot.send_message(owner_telegram_id, text, reply_markup=reply_markup)
         except TelegramAPIError as exc:
             logger.warning(
                 "Failed to notify owner %s: %s", owner_telegram_id, exc

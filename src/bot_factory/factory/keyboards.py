@@ -168,8 +168,51 @@ def back_to_tenant_kb(tenant_id: int) -> InlineKeyboardMarkup:
 # Reservations list
 
 
+def reservation_actions_kb(
+    reservation: Reservation,
+    *,
+    include_back: bool = True,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if reservation.status == "new":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="✅ Подтвердить",
+                    callback_data=f"resstatus:{reservation.id}:confirmed",
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отклонить",
+                    callback_data=f"resstatus:{reservation.id}:declined",
+                ),
+            ]
+        )
+    if include_back:
+        rows.append(
+            [InlineKeyboardButton(text="« Назад", callback_data=f"res:{reservation.tenant_id}")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def reservations_kb(
     tenant_id: int,
     reservations: Sequence[Reservation],
 ) -> InlineKeyboardMarkup:
-    return back_to_tenant_kb(tenant_id)
+    rows: list[list[InlineKeyboardButton]] = []
+    for reservation in reservations:
+        if reservation.status != "new":
+            continue
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"✅ #{reservation.id}",
+                    callback_data=f"resstatus:{reservation.id}:confirmed",
+                ),
+                InlineKeyboardButton(
+                    text=f"❌ #{reservation.id}",
+                    callback_data=f"resstatus:{reservation.id}:declined",
+                ),
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"tenant:{tenant_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

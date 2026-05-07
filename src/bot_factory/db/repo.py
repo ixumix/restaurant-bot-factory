@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import MenuItem, Owner, Reservation, Tenant
 
+RESERVATION_STATUS_VALUES = frozenset({"new", "confirmed", "declined", "cancelled", "done"})
+
 # ---------------------------------------------------------------------------
 # Owners
 
@@ -218,6 +220,25 @@ async def create_reservation(
         comment=comment,
     )
     session.add(reservation)
+    await session.commit()
+    await session.refresh(reservation)
+    return reservation
+
+
+async def get_reservation(session: AsyncSession, reservation_id: int) -> Reservation | None:
+    return await session.get(Reservation, reservation_id)
+
+
+async def update_reservation_status(
+    session: AsyncSession, reservation_id: int, status: str
+) -> Reservation | None:
+    if status not in RESERVATION_STATUS_VALUES:
+        msg = f"Unknown reservation status: {status!r}"
+        raise ValueError(msg)
+    reservation = await session.get(Reservation, reservation_id)
+    if reservation is None:
+        return None
+    reservation.status = status
     await session.commit()
     await session.refresh(reservation)
     return reservation
