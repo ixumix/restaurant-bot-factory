@@ -120,7 +120,7 @@ async def test_menu_items_lifecycle(session: AsyncSession) -> None:
 async def test_reservations_lifecycle(session: AsyncSession) -> None:
     _, tenant_id = await _make_owner_and_tenant(session)
 
-    await repo.create_reservation(
+    created = await repo.create_reservation(
         session,
         tenant_id=tenant_id,
         customer_name="Alice",
@@ -134,6 +134,18 @@ async def test_reservations_lifecycle(session: AsyncSession) -> None:
     assert len(res) == 1
     assert res[0].customer_name == "Alice"
     assert res[0].comment == "Birthday"
+    assert res[0].status == "new"
+
+    fetched = await repo.get_reservation(session, created.id)
+    assert fetched is not None
+    assert fetched.id == created.id
+
+    updated = await repo.update_reservation_status(session, created.id, "confirmed")
+    assert updated is not None
+    assert updated.status == "confirmed"
+
+    with pytest.raises(ValueError):
+        await repo.update_reservation_status(session, created.id, "bad")
 
 
 async def test_delete_tenant_cascades(session: AsyncSession) -> None:
