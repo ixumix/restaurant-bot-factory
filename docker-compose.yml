@@ -1,0 +1,12 @@
+services:
+  factory:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////data/factory.db
+    volumes:
+      - factory-data:/data
+
+volumes:
+  factory-data:
