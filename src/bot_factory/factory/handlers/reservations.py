@@ -17,7 +17,15 @@ from .. import keyboards, texts
 router = Router(name="factory.reservations")
 logger = logging.getLogger(__name__)
 
-_OWNER_ACTION_STATUSES = {"confirmed", "declined"}
+# Allowed transitions from owner-side actions on a reservation. Anything else
+# (e.g. trying to mark a "declined" reservation as "done") is rejected silently.
+_ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    "new": {"confirmed", "declined"},
+    "confirmed": {"done", "cancelled"},
+}
+_ALL_OWNER_ACTION_STATUSES: set[str] = {
+    s for transitions in _ALLOWED_TRANSITIONS.values() for s in transitions
+}
 
 
 def _parse_status_payload(data: str) -> tuple[int, str] | None:
@@ -25,7 +33,7 @@ def _parse_status_payload(data: str) -> tuple[int, str] | None:
     if len(parts) != 3:
         return None
     _, reservation_id_raw, status = parts
-    if status not in _OWNER_ACTION_STATUSES:
+    if status not in _ALL_OWNER_ACTION_STATUSES:
         return None
     try:
         reservation_id = int(reservation_id_raw)
@@ -138,7 +146,8 @@ async def update_reservation_status(
         if tenant is None or tenant.owner_id != call.from_user.id:
             await call.answer("Не найдено")
             return
-        if reservation.status != "new":
+        allowed = _ALLOWED_TRANSITIONS.get(reservation.status, set())
+        if status not in allowed:
             await call.answer(texts.RESERVATION_ALREADY_PROCESSED)
             return
         updated = await repo.update_reservation_status(session, reservation_id, status)
@@ -146,9 +155,13 @@ async def update_reservation_status(
             await call.answer(texts.RESERVATION_NOT_FOUND)
             return
 
-    customer_notified = await _notify_customer_about_status(
-        tenant, updated, telegram_proxy_url
-    )
+    # Only notify the customer for transitions that are visible to them — marking
+    # a reservation as "done" or owner-side "cancelled" is internal bookkeeping.
+    customer_notified = False
+    if status in {"confirmed", "declined"}:
+        customer_notified = await _notify_customer_about_status(
+            tenant, updated, telegram_proxy_url
+        )
 
     await call.answer(texts.RESERVATION_STATUS_UPDATED)
     if call.message is not None:

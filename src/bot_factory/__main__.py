@@ -7,6 +7,7 @@ import logging
 import signal
 
 from .child.handlers import make_child_dispatcher_factory
+from .commands import FACTORY_COMMANDS, set_bot_commands
 from .config import load_settings
 from .db import repo
 from .db.models import Tenant
@@ -28,6 +29,8 @@ async def amain() -> None:
     telegram_proxy_url = settings.telegram_proxy_url_value
 
     factory_bot = make_factory_bot(settings.factory_bot_token, telegram_proxy_url)
+    # Best-effort — failure here only degrades the ``/`` menu, not the bot.
+    await set_bot_commands(factory_bot, FACTORY_COMMANDS)
     notifier = Notifier(factory_bot)
     child_dp_factory = make_child_dispatcher_factory(
         sessionmaker=sessionmaker, notifier=notifier

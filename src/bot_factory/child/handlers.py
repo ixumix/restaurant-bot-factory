@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 
 from aiogram import Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
@@ -71,8 +71,7 @@ def _build_router(
 
     # ---------------- Menu ----------------
 
-    @router.message(F.text == "🍽 Меню")
-    async def show_menu(message: Message) -> None:
+    async def _send_menu(message: Message) -> None:
         async with sessionmaker() as session:
             tenant = await repo.get_tenant(session, tenant_id)
             if tenant is None:
@@ -82,8 +81,14 @@ def _build_router(
             )
         await message.answer(texts.menu_text(tenant, items))
 
+    @router.message(Command("menu"))
+    @router.message(F.text == "🍽 Меню")
+    async def show_menu(message: Message) -> None:
+        await _send_menu(message)
+
     # ---------------- Contacts / About ----------------
 
+    @router.message(Command("contacts"))
     @router.message(F.text == "📍 Контакты")
     async def show_contacts(message: Message) -> None:
         async with sessionmaker() as session:
@@ -92,6 +97,7 @@ def _build_router(
             return
         await message.answer(texts.contacts_text(tenant))
 
+    @router.message(Command("about"))
     @router.message(F.text == "💬 О нас")
     async def show_about(message: Message) -> None:
         async with sessionmaker() as session:
@@ -102,11 +108,41 @@ def _build_router(
 
     # ---------------- Booking ----------------
 
-    @router.message(F.text == "📅 Забронировать")
-    async def start_booking(message: Message, state: FSMContext) -> None:
+    async def _ask_date(message: Message, state: FSMContext) -> None:
         await state.clear()
         await state.set_state(Booking.waiting_for_date)
-        await message.answer(texts.BOOK_ASK_DATE)
+        await message.answer(
+            texts.BOOK_ASK_DATE,
+            reply_markup=keyboards.booking_date_kb(),
+        )
+
+    @router.message(Command("book"))
+    @router.message(F.text == "📅 Забронировать")
+    async def start_booking(message: Message, state: FSMContext) -> None:
+        await _ask_date(message, state)
+
+    @router.callback_query(Booking.waiting_for_date, F.data.startswith("bookdate:"))
+    async def receive_date_callback(call: CallbackQuery, state: FSMContext) -> None:
+        if call.data is None or call.message is None:
+            return
+        raw = call.data.split(":", 1)[1]
+        if not _DATE_RE.match(raw):
+            await call.answer(texts.BOOK_DATE_INVALID, show_alert=True)
+            return
+        try:
+            chosen = datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            await call.answer(texts.BOOK_DATE_INVALID, show_alert=True)
+            return
+        if chosen < datetime.now(UTC).date():
+            await call.answer(texts.BOOK_DATE_PAST, show_alert=True)
+            return
+        await state.update_data(date_iso=raw)
+        await state.set_state(Booking.waiting_for_time)
+        await call.message.answer(
+            texts.BOOK_ASK_TIME, reply_markup=keyboards.cancel_booking_kb()
+        )
+        await call.answer()
 
     @router.message(Booking.waiting_for_date)
     async def receive_date(message: Message, state: FSMContext) -> None:
@@ -119,12 +155,14 @@ def _build_router(
         except ValueError:
             await message.answer(texts.BOOK_DATE_INVALID)
             return
-        if chosen < datetime.utcnow().date():
+        if chosen < datetime.now(UTC).date():
             await message.answer(texts.BOOK_DATE_PAST)
             return
         await state.update_data(date_iso=raw)
         await state.set_state(Booking.waiting_for_time)
-        await message.answer(texts.BOOK_ASK_TIME)
+        await message.answer(
+            texts.BOOK_ASK_TIME, reply_markup=keyboards.cancel_booking_kb()
+        )
 
     @router.message(Booking.waiting_for_time)
     async def receive_time(message: Message, state: FSMContext) -> None:

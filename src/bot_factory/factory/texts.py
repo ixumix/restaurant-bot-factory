@@ -31,6 +31,8 @@ RESERVATION_STATUS_LABELS: dict[str, str] = {
 RESERVATION_STATUS_ACTIONS: dict[str, str] = {
     "confirmed": "подтвердил",
     "declined": "отклонил",
+    "done": "отметил как выполненную",
+    "cancelled": "отменил",
 }
 
 
@@ -138,8 +140,18 @@ def create_summary(
 def created_ok(bot_username: str) -> str:
     return (
         f"✅ Готово! Твой бот @{bot_username} запущен.\n\n"
-        "Открой его в Telegram и нажми /start, чтобы посмотреть, что увидят гости.\n"
+        f"🔗 <a href=\"https://t.me/{bot_username}\">Открыть @{bot_username}</a> "
+        "и нажать /start, чтобы посмотреть, что увидят гости.\n"
         "Чтобы добавить блюда в меню или поменять данные — открой раздел «🤖 Мои боты»."
+    )
+
+
+def whoami(user_id: int) -> str:
+    return (
+        f"🆔 Твой Telegram ID: <code>{user_id}</code>\n\n"
+        "Если ты администратор инстанса конструктора, добавь этот ID в "
+        "переменную окружения <code>ALLOWED_OWNER_IDS</code>, чтобы получить "
+        "доступ к созданию ботов."
     )
 
 
@@ -213,9 +225,53 @@ MENU_ADD_PRICE = (
     "Цена в рублях. Целое число или с копейками через запятую/точку (например, "
     "<code>450</code> или <code>450.50</code>)."
 )
+MENU_ADD_CATEGORY = (
+    "Категория позиции — пригодится, если меню длинное (например, <i>Закуски</i>, "
+    "<i>Горячее</i>, <i>Десерты</i>, <i>Бар</i>). Можно <i>пропустить</i>."
+)
 MENU_ADD_PRICE_INVALID = "❌ Не понял цену. Введи число, например <code>450</code>."
 MENU_ADD_OK = "✅ Позиция добавлена."
 MENU_ITEM_DELETED = "🗑 Позиция удалена."
+
+MENU_EDIT_FIELD_PROMPTS: dict[str, str] = {
+    "title": "Введи новое название позиции.",
+    "description": (
+        "Введи новое описание (состав / порция). Можно <i>пропустить</i> — "
+        "тогда описание удалится."
+    ),
+    "price_minor": (
+        "Введи новую цену в рублях (например, <code>450</code> или "
+        "<code>450.50</code>)."
+    ),
+    "category": (
+        "Введи новую категорию (например, <i>Закуски</i>). Можно "
+        "<i>пропустить</i> — тогда категория удалится."
+    ),
+}
+MENU_EDIT_SAVED = "✅ Позиция обновлена."
+MENU_ITEM_NOT_FOUND = "❌ Позиция не найдена — видимо, её уже удалили."
+MENU_ITEM_TOGGLE_HIDDEN = "🚫 Позиция скрыта от гостей."
+MENU_ITEM_TOGGLE_VISIBLE = "✅ Позиция снова видна гостям."
+
+
+def menu_item_card(
+    *,
+    title: str,
+    description: str | None,
+    price_pretty: str,
+    category: str | None,
+    is_available: bool,
+) -> str:
+    parts = [
+        f"<b>{title}</b>",
+        f"💰 {price_pretty}",
+    ]
+    if category:
+        parts.append(f"🏷 {category}")
+    parts.append("👁 Доступна гостям" if is_available else "🚫 Скрыта от гостей")
+    if description:
+        parts.append(f"\n{description}")
+    return "\n".join(parts)
 
 # ---------------------------------------------------------------------------
 # Reservations

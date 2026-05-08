@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -14,6 +14,11 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC "now" used as the default for ``created_at`` columns."""
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -28,7 +33,7 @@ class Owner(Base):
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     full_name: Mapped[str] = mapped_column(String(255))
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     tenants: Mapped[list[Tenant]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
@@ -53,7 +58,7 @@ class Tenant(Base):
     phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     working_hours: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     owner: Mapped[Owner] = relationship(back_populates="tenants")
     menu_items: Mapped[list[MenuItem]] = relationship(
@@ -107,6 +112,6 @@ class Reservation(Base):
     party_size: Mapped[int] = mapped_column(Integer)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="new")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     tenant: Mapped[Tenant] = relationship(back_populates="reservations")

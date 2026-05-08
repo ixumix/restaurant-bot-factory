@@ -193,6 +193,43 @@ async def delete_menu_item(session: AsyncSession, item_id: int) -> bool:
     return True
 
 
+# Fields the owner can edit on an existing :class:`MenuItem` from the UI.
+_EDITABLE_MENU_ITEM_FIELDS: frozenset[str] = frozenset(
+    {"title", "description", "price_minor", "category", "is_available"}
+)
+
+
+async def get_menu_item(session: AsyncSession, item_id: int) -> MenuItem | None:
+    return await session.get(MenuItem, item_id)
+
+
+async def update_menu_item_field(
+    session: AsyncSession, item_id: int, field: str, value: object
+) -> MenuItem | None:
+    if field not in _EDITABLE_MENU_ITEM_FIELDS:
+        msg = f"Unknown menu item field: {field!r}"
+        raise ValueError(msg)
+    item = await session.get(MenuItem, item_id)
+    if item is None:
+        return None
+    setattr(item, field, value)
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
+async def toggle_menu_item_availability(
+    session: AsyncSession, item_id: int
+) -> MenuItem | None:
+    item = await session.get(MenuItem, item_id)
+    if item is None:
+        return None
+    item.is_available = not item.is_available
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
 # ---------------------------------------------------------------------------
 # Reservations
 

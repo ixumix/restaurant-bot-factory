@@ -15,6 +15,8 @@ from aiogram import Bot, Dispatcher
 
 from .telegram import make_telegram_bot
 
+from .commands import CHILD_COMMANDS, set_bot_commands
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -28,6 +30,13 @@ logger = logging.getLogger(__name__)
 ChildDispatcherFactory = Callable[[int], Dispatcher]
 # Type of the function that returns the list of currently active tenants.
 ActiveTenantsLoader = Callable[[], Awaitable[list["Tenant"]]]
+
+
+# Restart-on-crash backoff for child bot polling. Polling failures usually mean
+# either a transient network error or a token that's been revoked — the first
+# is recoverable, the second isn't, so we cap retries with exponential backoff.
+_CHILD_POLLING_INITIAL_BACKOFF_S = 2.0
+_CHILD_POLLING_MAX_BACKOFF_S = 60.0
 
 
 class BotManager:
@@ -104,15 +113,29 @@ class BotManager:
 
     async def _start_child_locked(self, tenant: Tenant) -> None:
         bot = make_telegram_bot(tenant.bot_token, self._telegram_proxy_url)
+        # Best-effort — failure here only degrades the ``/`` menu, not the bot.
+        await set_bot_commands(bot, CHILD_COMMANDS)
         dp = self._make_child_dp(tenant.id)
 
         async def runner(child_bot: Bot, child_dp: Dispatcher, tid: int) -> None:
+            backoff = _CHILD_POLLING_INITIAL_BACKOFF_S
             try:
-                await child_dp.start_polling(child_bot)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # pragma: no cover - logging only
-                logger.exception("Child bot polling crashed for tenant %s", tid)
+                while True:
+                    try:
+                        await child_dp.start_polling(child_bot)
+                        # Polling exited cleanly — nothing to retry.
+                        return
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "Child bot polling crashed for tenant %s; "
+                            "retrying in %.1fs",
+                            tid,
+                            backoff,
+                        )
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2, _CHILD_POLLING_MAX_BACKOFF_S)
             finally:
                 await child_bot.session.close()
 
