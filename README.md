@@ -82,6 +82,10 @@ loaded automatically). See [`.env.example`](./.env.example) for the full list.
 | `DATABASE_URL` | no | `sqlite+aiosqlite:///./data/factory.db` | Any SQLAlchemy async URL. |
 | `ALLOWED_OWNER_IDS` | no | empty (everyone) | Comma-separated Telegram user IDs allowed to register as venue owners. |
 | `LOG_LEVEL` | no | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR`. |
+| `TELEGRAM_PROXY_URL` | no | empty | Proxy URL for Telegram API requests, e.g. `http://user:pass@host:port` or `socks5://user:pass@host:port`. |
+
+If `api.telegram.org` is unavailable from your network, set `TELEGRAM_PROXY_URL`
+in `.env`. System-wide VPN usually needs no extra configuration.
 
 ## Docker
 

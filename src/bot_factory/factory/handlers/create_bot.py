@@ -49,6 +49,7 @@ async def receive_token(
     message: Message,
     state: FSMContext,
     sessionmaker: async_sessionmaker[AsyncSession],
+    telegram_proxy_url: str | None,
 ) -> None:
     raw = (message.text or "").strip()
     if not looks_like_token(raw):
@@ -61,7 +62,7 @@ async def receive_token(
         await message.answer(texts.CREATE_TOKEN_TAKEN)
         return
 
-    info = await fetch_bot_info(raw)
+    info = await fetch_bot_info(raw, telegram_proxy_url)
     if info is None:
         await message.answer(texts.CREATE_TOKEN_BAD)
         return

@@ -8,6 +8,7 @@ license = { text = "MIT" }
 authors = [{ name = "ixumix" }]
 dependencies = [
     "aiogram>=3.10,<4.0",
+    "aiohttp-socks>=0.9,<1.0",
     "sqlalchemy[asyncio]>=2.0,<3.0",
     "aiosqlite>=0.20,<1.0",
     "pydantic>=2.7,<3.0",
