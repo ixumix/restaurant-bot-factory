@@ -25,8 +25,9 @@ async def amain() -> None:
 
     engine, sessionmaker = make_engine_and_sessionmaker(settings.database_url)
     await init_db(engine)
+    telegram_proxy_url = settings.telegram_proxy_url_value
 
-    factory_bot = make_factory_bot(settings.factory_bot_token)
+    factory_bot = make_factory_bot(settings.factory_bot_token, telegram_proxy_url)
     notifier = Notifier(factory_bot)
     child_dp_factory = make_child_dispatcher_factory(
         sessionmaker=sessionmaker, notifier=notifier
@@ -41,6 +42,7 @@ async def amain() -> None:
         sessionmaker=sessionmaker,
         allowed_owner_ids=settings.allowed_owner_id_set,
         manager_provider=manager_provider,
+        telegram_proxy_url=telegram_proxy_url,
     )
 
     async def load_active() -> list[Tenant]:
@@ -54,6 +56,7 @@ async def amain() -> None:
         notifier=notifier,
         child_dispatcher_factory=child_dp_factory,
         active_tenants_loader=load_active,
+        telegram_proxy_url=telegram_proxy_url,
     )
     manager_holder["manager"] = manager
 
