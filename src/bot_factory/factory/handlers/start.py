@@ -51,6 +51,14 @@ async def handle_help(message: Message, allowed_owner_ids: set[int]) -> None:
     await message.answer(texts.HELP)
 
 
+@router.message(Command("whoami"))
+async def handle_whoami(message: Message) -> None:
+    """Show the user their Telegram ID — useful for filling ``ALLOWED_OWNER_IDS``."""
+    if message.from_user is None:
+        return
+    await message.answer(texts.whoami(message.from_user.id))
+
+
 @router.message(Command("cancel"))
 async def handle_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()

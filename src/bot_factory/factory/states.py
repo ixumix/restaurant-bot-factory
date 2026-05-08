@@ -30,3 +30,10 @@ class AddMenuItem(StatesGroup):
     waiting_for_title = State()
     waiting_for_description = State()
     waiting_for_price = State()
+    waiting_for_category = State()
+
+
+class EditMenuItem(StatesGroup):
+    """Owner edits a single field of an existing menu item."""
+
+    waiting_for_value = State()

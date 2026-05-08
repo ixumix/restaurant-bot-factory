@@ -129,12 +129,21 @@ def confirm_delete_kb(tenant_id: int) -> InlineKeyboardMarkup:
 def menu_editor_kb(tenant_id: int, items: Sequence[MenuItem]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for item in items:
+        avail_label = "✅" if item.is_available else "🚫"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"🗑 {item.title}",
+                    text=f"📝 {item.title}",
+                    callback_data=f"menuedit:{item.id}",
+                ),
+                InlineKeyboardButton(
+                    text=avail_label,
+                    callback_data=f"menutoggle:{item.id}",
+                ),
+                InlineKeyboardButton(
+                    text="🗑",
                     callback_data=f"menudel:{item.id}",
-                )
+                ),
             ]
         )
     rows.append(
@@ -149,6 +158,50 @@ def menu_editor_kb(tenant_id: int, items: Sequence[MenuItem]) -> InlineKeyboardM
         [InlineKeyboardButton(text="« Назад", callback_data=f"tenant:{tenant_id}")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def menu_item_edit_kb(item_id: int, tenant_id: int) -> InlineKeyboardMarkup:
+    """Inline menu shown when the owner taps a single menu item to edit it."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Название",
+                    callback_data=f"menufield:{item_id}:title",
+                ),
+                InlineKeyboardButton(
+                    text="✏️ Описание",
+                    callback_data=f"menufield:{item_id}:description",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Цена",
+                    callback_data=f"menufield:{item_id}:price_minor",
+                ),
+                InlineKeyboardButton(
+                    text="✏️ Категория",
+                    callback_data=f"menufield:{item_id}:category",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔁 Доступность",
+                    callback_data=f"menutoggle:{item_id}",
+                ),
+                InlineKeyboardButton(
+                    text="🗑 Удалить",
+                    callback_data=f"menudel:{item_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« К меню",
+                    callback_data=f"menu:{tenant_id}",
+                )
+            ],
+        ]
+    )
 
 
 def back_to_tenant_kb(tenant_id: int) -> InlineKeyboardMarkup:
@@ -187,6 +240,19 @@ def reservation_actions_kb(
                 ),
             ]
         )
+    if reservation.status == "confirmed":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🍽 Гости пришли",
+                    callback_data=f"resstatus:{reservation.id}:done",
+                ),
+                InlineKeyboardButton(
+                    text="🚫 Отменить",
+                    callback_data=f"resstatus:{reservation.id}:cancelled",
+                ),
+            ]
+        )
     if include_back:
         rows.append(
             [InlineKeyboardButton(text="« Назад", callback_data=f"res:{reservation.tenant_id}")]
@@ -200,19 +266,31 @@ def reservations_kb(
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for reservation in reservations:
-        if reservation.status != "new":
-            continue
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"✅ #{reservation.id}",
-                    callback_data=f"resstatus:{reservation.id}:confirmed",
-                ),
-                InlineKeyboardButton(
-                    text=f"❌ #{reservation.id}",
-                    callback_data=f"resstatus:{reservation.id}:declined",
-                ),
-            ]
-        )
+        if reservation.status == "new":
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"✅ #{reservation.id}",
+                        callback_data=f"resstatus:{reservation.id}:confirmed",
+                    ),
+                    InlineKeyboardButton(
+                        text=f"❌ #{reservation.id}",
+                        callback_data=f"resstatus:{reservation.id}:declined",
+                    ),
+                ]
+            )
+        elif reservation.status == "confirmed":
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"🍽 #{reservation.id}",
+                        callback_data=f"resstatus:{reservation.id}:done",
+                    ),
+                    InlineKeyboardButton(
+                        text=f"🚫 #{reservation.id}",
+                        callback_data=f"resstatus:{reservation.id}:cancelled",
+                    ),
+                ]
+            )
     rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"tenant:{tenant_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
