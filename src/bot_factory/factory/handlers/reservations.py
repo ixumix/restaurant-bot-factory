@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import logging
 
-from aiogram import Bot, F, Router
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram import F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...db import repo
 from ...db.models import Reservation, Tenant
+from ...telegram import make_telegram_bot
 from .. import keyboards, texts
 
 router = Router(name="factory.reservations")
@@ -50,14 +49,12 @@ def _format_reservation(reservation: Reservation) -> str:
 async def _notify_customer_about_status(
     tenant: Tenant,
     reservation: Reservation,
+    telegram_proxy_url: str | None,
 ) -> bool:
     if reservation.customer_telegram_id is None:
         return False
 
-    bot = Bot(
-        token=tenant.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = make_telegram_bot(tenant.bot_token, telegram_proxy_url)
     try:
         await bot.send_message(
             reservation.customer_telegram_id,
@@ -122,6 +119,7 @@ async def show_reservations(
 async def update_reservation_status(
     call: CallbackQuery,
     sessionmaker: async_sessionmaker[AsyncSession],
+    telegram_proxy_url: str | None,
 ) -> None:
     if call.data is None or call.from_user is None:
         return
@@ -148,7 +146,9 @@ async def update_reservation_status(
             await call.answer(texts.RESERVATION_NOT_FOUND)
             return
 
-    customer_notified = await _notify_customer_about_status(tenant, updated)
+    customer_notified = await _notify_customer_about_status(
+        tenant, updated, telegram_proxy_url
+    )
 
     await call.answer(texts.RESERVATION_STATUS_UPDATED)
     if call.message is not None:

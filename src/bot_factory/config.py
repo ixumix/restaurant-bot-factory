@@ -29,6 +29,15 @@ class Settings(BaseSettings):
         description="Comma-separated Telegram user IDs allowed to register as venue owners. Empty = everyone.",
     )
     log_level: str = Field(default="INFO")
+    telegram_proxy_url: str = Field(
+        default="",
+        description="Optional proxy URL for Telegram API requests.",
+    )
+
+    @property
+    def telegram_proxy_url_value(self) -> str | None:
+        raw = self.telegram_proxy_url.strip()
+        return raw or None
 
     @property
     def allowed_owner_id_set(self) -> set[int]:

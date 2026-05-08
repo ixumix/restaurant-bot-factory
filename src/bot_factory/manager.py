@@ -12,8 +12,8 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+
+from .telegram import make_telegram_bot
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -42,6 +42,7 @@ class BotManager:
         notifier: Notifier,
         child_dispatcher_factory: ChildDispatcherFactory,
         active_tenants_loader: ActiveTenantsLoader,
+        telegram_proxy_url: str | None = None,
     ) -> None:
         self._factory_bot = factory_bot
         self._factory_dp = factory_dispatcher
@@ -49,6 +50,7 @@ class BotManager:
         self._notifier = notifier
         self._make_child_dp = child_dispatcher_factory
         self._load_active = active_tenants_loader
+        self._telegram_proxy_url = telegram_proxy_url
 
         # tenant_id → (Bot, asyncio.Task running its polling loop)
         self._children: dict[int, tuple[Bot, asyncio.Task[None]]] = {}
@@ -101,10 +103,7 @@ class BotManager:
     # --------------------------------------------------------------- internals
 
     async def _start_child_locked(self, tenant: Tenant) -> None:
-        bot = Bot(
-            token=tenant.bot_token,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
+        bot = make_telegram_bot(tenant.bot_token, self._telegram_proxy_url)
         dp = self._make_child_dp(tenant.id)
 
         async def runner(child_bot: Bot, child_dp: Dispatcher, tid: int) -> None:
