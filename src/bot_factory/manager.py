@@ -13,9 +13,8 @@ from typing import TYPE_CHECKING
 
 from aiogram import Bot, Dispatcher
 
-from .telegram import make_telegram_bot
-
 from .commands import CHILD_COMMANDS, set_bot_commands
+from .telegram import make_telegram_bot
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
