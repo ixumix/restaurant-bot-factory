@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import re
 
-from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
+
+from ...telegram import make_telegram_bot
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,11 @@ def looks_like_token(text: str) -> bool:
     return bool(_TOKEN_RE.match(text.strip()))
 
 
-async def fetch_bot_info(token: str) -> tuple[str, str] | None:
+async def fetch_bot_info(
+    token: str, proxy_url: str | None = None
+) -> tuple[str, str] | None:
     """Call ``getMe`` for ``token``. Returns ``(username, first_name)`` or ``None``."""
-    bot = Bot(token=token)
+    bot = make_telegram_bot(token, proxy_url)
     try:
         me = await bot.get_me()
     except TelegramAPIError as exc:

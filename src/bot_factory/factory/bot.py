@@ -6,10 +6,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from ..telegram import make_telegram_bot
 from .handlers import create_bot, manage, menu_edit, reservations, start
 
 if TYPE_CHECKING:
@@ -18,12 +17,9 @@ if TYPE_CHECKING:
     from ..manager import BotManager
 
 
-def make_factory_bot(token: str) -> Bot:
+def make_factory_bot(token: str, proxy_url: str | None = None) -> Bot:
     """Create the factory :class:`Bot` instance."""
-    return Bot(
-        token=token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    return make_telegram_bot(token, proxy_url)
 
 
 def make_factory_dispatcher(
@@ -31,6 +27,7 @@ def make_factory_dispatcher(
     sessionmaker: async_sessionmaker[AsyncSession],
     allowed_owner_ids: set[int],
     manager_provider: Callable[[], BotManager],
+    telegram_proxy_url: str | None,
 ) -> Dispatcher:
     """Build a :class:`Dispatcher` for the constructor bot.
 
@@ -44,6 +41,7 @@ def make_factory_dispatcher(
     dp["sessionmaker"] = sessionmaker
     dp["allowed_owner_ids"] = allowed_owner_ids
     dp["manager_provider"] = manager_provider
+    dp["telegram_proxy_url"] = telegram_proxy_url
 
     dp.include_router(start.router)
     dp.include_router(create_bot.router)
