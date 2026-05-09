@@ -28,6 +28,14 @@ from ..claude import (
     ClaudeError,
 )
 from ..db import repo
+from ..devin_chat import (
+    DevinAllKeysExhaustedError,
+    DevinAPIError,
+    DevinChatClient,
+    DevinError,
+    DevinSessionExpiredError,
+    DevinTimeoutError,
+)
 from ..factory import keyboards as factory_keyboards
 from ..factory import texts as factory_texts  # for `new_reservation_notification`
 from ..notifications import Notifier
@@ -59,10 +67,15 @@ def _build_router(
     claude_client: ClaudeClient | None = None,
     claude_history_limit: int = 10,
     claude_system_prompt_override: str | None = None,
+    devin_client: DevinChatClient | None = None,
 ) -> Router:
     """Return a :class:`Router` with all handlers bound to this tenant."""
     router = Router(name=f"child.tenant{tenant_id}")
-    support_enabled = claude_client is not None
+    # At most one chat backend is active at a time. Claude takes precedence
+    # when both are configured (the dispatcher factory resolves this).
+    claude_enabled = claude_client is not None
+    devin_enabled = devin_client is not None and not claude_enabled
+    support_enabled = claude_enabled or devin_enabled
 
     def _menu_kb() -> ReplyKeyboardMarkup:
         return keyboards.main_menu_kb(with_support=support_enabled)
@@ -120,32 +133,47 @@ def _build_router(
             return
         await message.answer(texts.about_text(tenant))
 
-    # ---------------- Support chat (Claude) ----------------
+    # ---------------- Support chat (Claude / Devin) ----------------
 
     if support_enabled:
-        # Type-narrowing for the closure: support_enabled implies non-None.
-        client: ClaudeClient = cast(ClaudeClient, claude_client)
         history_limit = max(1, claude_history_limit)
         # Each (user, assistant) pair is two messages.
         max_history_messages = history_limit * 2
+
+        async def _resolve_system_prompt() -> str | None:
+            """Build the support-chat system prompt for this tenant."""
+            async with sessionmaker() as session:
+                tenant = await repo.get_tenant(session, tenant_id)
+            if tenant is None:
+                return None
+            return (
+                claude_system_prompt_override
+                if claude_system_prompt_override
+                else texts.support_system_prompt(tenant)
+            )
 
         @router.message(F.text == keyboards.SUPPORT_BUTTON_TEXT)
         async def enter_support(message: Message, state: FSMContext) -> None:
             await state.clear()
             await state.set_state(Support.chatting)
             await state.update_data(history=[])
-            await message.answer(
-                texts.SUPPORT_INTRO,
-                reply_markup=keyboards.support_chat_kb(),
+            intro = (
+                texts.SUPPORT_INTRO_DEVIN if devin_enabled else texts.SUPPORT_INTRO
             )
+            await message.answer(intro, reply_markup=keyboards.support_chat_kb())
 
         @router.message(Support.chatting, F.text == keyboards.SUPPORT_EXIT_TEXT)
         async def exit_support(message: Message, state: FSMContext) -> None:
             await state.clear()
             await message.answer(texts.SUPPORT_LEFT, reply_markup=_menu_kb())
 
+    if claude_enabled:
+        client: ClaudeClient = cast(ClaudeClient, claude_client)
+
         @router.message(Support.chatting)
-        async def support_message(message: Message, state: FSMContext) -> None:
+        async def claude_support_message(
+            message: Message, state: FSMContext
+        ) -> None:
             user_text = (message.text or "").strip()
             if not user_text:
                 await message.answer(texts.SUPPORT_EMPTY_INPUT)
@@ -165,23 +193,16 @@ def _build_router(
                     )
 
             history.append(ChatMessage(role="user", content=user_text))
-            # Keep only the most recent N messages (sliding window).
+            # Sliding window over the most recent N messages.
             trimmed = history[-max_history_messages:]
 
-            async with sessionmaker() as session:
-                tenant = await repo.get_tenant(session, tenant_id)
-            if tenant is None:
+            system_prompt = await _resolve_system_prompt()
+            if system_prompt is None:
                 await state.clear()
                 await message.answer(
                     "Бот временно недоступен.", reply_markup=_menu_kb()
                 )
                 return
-
-            system_prompt = (
-                claude_system_prompt_override
-                if claude_system_prompt_override
-                else texts.support_system_prompt(tenant)
-            )
 
             try:
                 reply_text = await client.send(trimmed, system=system_prompt)
@@ -206,10 +227,112 @@ def _build_router(
 
             trimmed.append(ChatMessage(role="assistant", content=reply_text))
             trimmed = trimmed[-max_history_messages:]
-            await state.update_data(
-                history=[m.to_api() for m in trimmed]
-            )
+            await state.update_data(history=[m.to_api() for m in trimmed])
             await message.answer(reply_text)
+
+    elif devin_enabled:
+        dclient: DevinChatClient = cast(DevinChatClient, devin_client)
+
+        @router.message(Support.chatting)
+        async def devin_support_message(
+            message: Message, state: FSMContext
+        ) -> None:
+            user_text = (message.text or "").strip()
+            if not user_text:
+                await message.answer(texts.SUPPORT_EMPTY_INPUT)
+                return
+
+            system_prompt = await _resolve_system_prompt()
+            if system_prompt is None:
+                await state.clear()
+                await message.answer(
+                    "Бот временно недоступен.", reply_markup=_menu_kb()
+                )
+                return
+
+            data = await state.get_data()
+            raw_session_id = data.get("devin_session_id")
+            raw_key_index = data.get("devin_key_index")
+            raw_last_event = data.get("devin_last_event_id")
+            session_id = (
+                raw_session_id if isinstance(raw_session_id, str) else None
+            )
+            key_index = (
+                raw_key_index if isinstance(raw_key_index, int) else None
+            )
+            last_event_id = (
+                raw_last_event if isinstance(raw_last_event, str) else None
+            )
+
+            # Tell the user we're working — Devin sessions are slow.
+            try:
+                thinking_msg = await message.answer(texts.SUPPORT_THINKING)
+            except Exception:
+                thinking_msg = None
+
+            try:
+                if session_id is None or key_index is None:
+                    initial_prompt = (
+                        f"{system_prompt}\n\n"
+                        f"Первое сообщение гостя:\n{user_text}"
+                    )
+                    reply = await dclient.start_session(prompt=initial_prompt)
+                else:
+                    try:
+                        reply = await dclient.send_message(
+                            session_id=session_id,
+                            message=user_text,
+                            key_index=key_index,
+                            last_event_id=last_event_id,
+                        )
+                    except DevinSessionExpiredError as exc:
+                        logger.info(
+                            "Devin session %s expired for tenant %s, restarting",
+                            exc.session_id,
+                            tenant_id,
+                        )
+                        initial_prompt = (
+                            f"{system_prompt}\n\n"
+                            f"Первое сообщение гостя:\n{user_text}"
+                        )
+                        reply = await dclient.start_session(prompt=initial_prompt)
+            except DevinAllKeysExhaustedError as exc:
+                logger.warning(
+                    "Devin keys exhausted for tenant %s: %s", tenant_id, exc
+                )
+                await message.answer(texts.SUPPORT_UNAVAILABLE)
+                return
+            except DevinTimeoutError as exc:
+                logger.warning(
+                    "Devin response timeout for tenant %s: %s", tenant_id, exc
+                )
+                await message.answer(texts.SUPPORT_TIMEOUT)
+                return
+            except DevinAPIError as exc:
+                logger.warning(
+                    "Devin API error for tenant %s: %s", tenant_id, exc
+                )
+                await message.answer(texts.SUPPORT_BACKEND_ERROR)
+                return
+            except DevinError as exc:
+                logger.warning(
+                    "Devin error for tenant %s: %s", tenant_id, exc
+                )
+                await message.answer(texts.SUPPORT_BACKEND_ERROR)
+                return
+            finally:
+                if thinking_msg is not None:
+                    try:
+                        await thinking_msg.delete()
+                    except Exception:
+                        pass
+
+            await state.update_data(
+                devin_session_id=reply.session_id,
+                devin_key_index=reply.key_index,
+                devin_last_event_id=reply.last_event_id,
+            )
+            await message.answer(reply.text)
 
     # ---------------- Booking ----------------
 
@@ -380,6 +503,7 @@ def make_child_dispatcher_factory(
     claude_client: ClaudeClient | None = None,
     claude_history_limit: int = 10,
     claude_system_prompt_override: str | None = None,
+    devin_client: DevinChatClient | None = None,
 ) -> Callable[[int], Dispatcher]:
     """Return a callable that builds a fresh :class:`Dispatcher` per tenant."""
 
@@ -393,6 +517,7 @@ def make_child_dispatcher_factory(
                 claude_client=claude_client,
                 claude_history_limit=claude_history_limit,
                 claude_system_prompt_override=claude_system_prompt_override,
+                devin_client=devin_client,
             )
         )
         return dp

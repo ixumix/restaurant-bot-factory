@@ -94,16 +94,36 @@ loaded automatically). See [`.env.example`](./.env.example) for the full list.
 | `CLAUDE_HISTORY_LIMIT` | no | `10` | Max recent (user, assistant) pairs kept in the chat context. |
 | `CLAUDE_TIMEOUT_SECONDS` | no | `60` | HTTP timeout for one Claude call. |
 | `CLAUDE_SYSTEM_PROMPT` | no | empty | Override the built-in restaurant-support system prompt. |
+| `DEVIN_API_KEYS` | no | empty | Comma-separated Devin API keys (`apk_*` or `cog_*`). Alternative chat backend via Devin sessions — slower, ACU-billed. |
+| `DEVIN_BASE_URL` | no | `https://api.devin.ai` | Devin API base URL. |
+| `DEVIN_POLL_INTERVAL_SECONDS` | no | `5` | Polling interval while waiting for a Devin reply. |
+| `DEVIN_RESPONSE_TIMEOUT_SECONDS` | no | `180` | Max time to wait for a single Devin reply. |
+| `DEVIN_MAX_ACU_LIMIT` | no | `0` | Per-session ACU cap. 0 = use the org default. |
+| `SUPPORT_BACKEND` | no | `auto` | `claude`, `devin`, or `auto` (prefer Claude). |
 
 If `api.telegram.org` is unavailable from your network, set `TELEGRAM_PROXY_URL`
 in `.env`. System-wide VPN usually needs no extra configuration.
 
-### Support chat (Claude)
+### Support chat backends
 
-Setting `CLAUDE_API_KEYS=key1,key2,key3` enables a `🤖 Поддержка` button in
-every child bot's main menu. Tapping it opens a live Telegram chat where the
-guest talks to Claude — the model is given the venue's name, description,
-address, phone and working hours so answers stay grounded in real data.
+Setting either `CLAUDE_API_KEYS` or `DEVIN_API_KEYS` enables a `🤖 Поддержка`
+button in every child bot's main menu. Tapping it opens a live Telegram chat
+where the guest talks to the configured AI backend — the model is given the
+venue's name, description, address, phone and working hours so answers stay
+grounded in real data.
+
+`SUPPORT_BACKEND` picks which backend to use:
+
+- `auto` (default) — uses Claude when `CLAUDE_API_KEYS` is set, otherwise
+  falls back to Devin if `DEVIN_API_KEYS` is set.
+- `claude` — forces the Anthropic backend (no-op if no Claude keys).
+- `devin` — forces the Devin backend.
+
+#### Claude (Anthropic Messages API)
+
+Direct calls to `POST {CLAUDE_BASE_URL}/v1/messages`. Each guest turn keeps
+a sliding window of the last `CLAUDE_HISTORY_LIMIT` (user, assistant) pairs
+in the FSM state and sends them as the message history.
 
 When the API responds with a key-specific failure (HTTP `429` rate limit,
 `402` insufficient credit, `401` / `403` invalid or revoked key), the bot
@@ -111,6 +131,19 @@ silently rotates to the next key in the list and retries. Each failing key
 is parked on a short cooldown so it isn't immediately retried. Only when
 every configured key is exhausted does the user see «Чат с ассистентом
 сейчас недоступен».
+
+#### Devin (api.devin.ai sessions)
+
+Each Telegram user gets one persistent Devin session, opened via
+`POST /v1/sessions` with the venue's system prompt + first message. Follow-up
+turns are sent with `POST /v1/sessions/{id}/message`; the bot polls
+`GET /v1/sessions/{id}` every `DEVIN_POLL_INTERVAL_SECONDS` until the agent's
+status flips to `blocked` and a new agent message appears.
+
+Devin sessions are **fundamentally slower** than Claude (seconds-to-minutes
+per reply) and burn ACUs. Use this only when you don't have direct Anthropic
+access. Multi-key rotation only kicks in when *opening* a new session — once
+a session exists, follow-up messages always go through the original key.
 
 ## Docker
 

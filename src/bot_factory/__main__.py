@@ -12,6 +12,7 @@ from .config import load_settings
 from .db import repo
 from .db.models import Tenant
 from .db.session import init_db, make_engine_and_sessionmaker
+from .devin_chat import DevinChatClient
 from .factory.bot import make_factory_bot, make_factory_dispatcher
 from .logging_setup import setup_logging
 from .manager import BotManager
@@ -31,9 +32,12 @@ async def amain() -> None:
     factory_bot = make_factory_bot(settings.factory_bot_token, telegram_proxy_url)
     notifier = Notifier(factory_bot)
 
-    claude_keys = settings.claude_api_key_list
-    claude_client: ClaudeClient | None
-    if claude_keys:
+    backend = settings.resolved_support_backend
+    claude_client: ClaudeClient | None = None
+    devin_client: DevinChatClient | None = None
+
+    if backend == "claude":
+        claude_keys = settings.claude_api_key_list
         claude_client = ClaudeClient(
             api_keys=claude_keys,
             model=settings.claude_model,
@@ -43,13 +47,28 @@ async def amain() -> None:
             timeout_seconds=settings.claude_timeout_seconds,
         )
         logger.info(
-            "Claude support chat enabled with %d API key(s), model=%s",
+            "Support chat backend=claude with %d API key(s), model=%s",
             len(claude_keys),
             settings.claude_model,
         )
+    elif backend == "devin":
+        devin_keys = settings.devin_api_key_list
+        devin_client = DevinChatClient(
+            api_keys=devin_keys,
+            base_url=settings.devin_base_url,
+            poll_interval_seconds=settings.devin_poll_interval_seconds,
+            response_timeout_seconds=settings.devin_response_timeout_seconds,
+            max_acu_limit=settings.devin_max_acu_limit_value,
+        )
+        logger.info(
+            "Support chat backend=devin with %d API key(s), base_url=%s",
+            len(devin_keys),
+            settings.devin_base_url,
+        )
     else:
-        claude_client = None
-        logger.info("Claude support chat disabled (no CLAUDE_API_KEYS set)")
+        logger.info(
+            "Support chat disabled (no CLAUDE_API_KEYS or DEVIN_API_KEYS set)"
+        )
 
     child_dp_factory = make_child_dispatcher_factory(
         sessionmaker=sessionmaker,
@@ -57,6 +76,7 @@ async def amain() -> None:
         claude_client=claude_client,
         claude_history_limit=settings.claude_history_limit,
         claude_system_prompt_override=settings.claude_system_prompt_value,
+        devin_client=devin_client,
     )
 
     manager_holder: dict[str, BotManager] = {}
@@ -121,6 +141,8 @@ async def amain() -> None:
                 pass
         if claude_client is not None:
             await claude_client.aclose()
+        if devin_client is not None:
+            await devin_client.aclose()
         await engine.dispose()
 
 
