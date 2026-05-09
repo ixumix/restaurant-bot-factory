@@ -7,6 +7,7 @@ import logging
 import signal
 
 from .child.handlers import make_child_dispatcher_factory
+from .claude import ClaudeClient
 from .config import load_settings
 from .db import repo
 from .db.models import Tenant
@@ -29,8 +30,33 @@ async def amain() -> None:
 
     factory_bot = make_factory_bot(settings.factory_bot_token, telegram_proxy_url)
     notifier = Notifier(factory_bot)
+
+    claude_keys = settings.claude_api_key_list
+    claude_client: ClaudeClient | None
+    if claude_keys:
+        claude_client = ClaudeClient(
+            api_keys=claude_keys,
+            model=settings.claude_model,
+            max_tokens=settings.claude_max_tokens,
+            base_url=settings.claude_base_url,
+            anthropic_version=settings.claude_anthropic_version,
+            timeout_seconds=settings.claude_timeout_seconds,
+        )
+        logger.info(
+            "Claude support chat enabled with %d API key(s), model=%s",
+            len(claude_keys),
+            settings.claude_model,
+        )
+    else:
+        claude_client = None
+        logger.info("Claude support chat disabled (no CLAUDE_API_KEYS set)")
+
     child_dp_factory = make_child_dispatcher_factory(
-        sessionmaker=sessionmaker, notifier=notifier
+        sessionmaker=sessionmaker,
+        notifier=notifier,
+        claude_client=claude_client,
+        claude_history_limit=settings.claude_history_limit,
+        claude_system_prompt_override=settings.claude_system_prompt_value,
     )
 
     manager_holder: dict[str, BotManager] = {}
@@ -93,6 +119,8 @@ async def amain() -> None:
                 await polling_task
             except (asyncio.CancelledError, Exception):
                 pass
+        if claude_client is not None:
+            await claude_client.aclose()
         await engine.dispose()
 
 

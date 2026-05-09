@@ -13,3 +13,9 @@ class Booking(StatesGroup):
     waiting_for_phone = State()
     waiting_for_comment = State()
     waiting_for_confirm = State()
+
+
+class Support(StatesGroup):
+    """Live support chat with the AI assistant (Claude)."""
+
+    chatting = State()

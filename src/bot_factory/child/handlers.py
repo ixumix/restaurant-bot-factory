@@ -7,23 +7,34 @@ and reused by every handler.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from datetime import datetime
+from typing import cast
 
 from aiogram import Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ..claude import (
+    ChatMessage,
+    ClaudeAllKeysExhaustedError,
+    ClaudeAPIError,
+    ClaudeClient,
+    ClaudeError,
+)
 from ..db import repo
 from ..factory import keyboards as factory_keyboards
 from ..factory import texts as factory_texts  # for `new_reservation_notification`
 from ..notifications import Notifier
 from . import keyboards, texts
-from .states import Booking
+from .states import Booking, Support
+
+logger = logging.getLogger(__name__)
 
 # Regex helpers
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -45,9 +56,16 @@ def _build_router(
     tenant_id: int,
     sessionmaker: async_sessionmaker[AsyncSession],
     notifier: Notifier,
+    claude_client: ClaudeClient | None = None,
+    claude_history_limit: int = 10,
+    claude_system_prompt_override: str | None = None,
 ) -> Router:
     """Return a :class:`Router` with all handlers bound to this tenant."""
     router = Router(name=f"child.tenant{tenant_id}")
+    support_enabled = claude_client is not None
+
+    def _menu_kb() -> ReplyKeyboardMarkup:
+        return keyboards.main_menu_kb(with_support=support_enabled)
 
     async def _send_main_menu(target: Message) -> None:
         async with sessionmaker() as session:
@@ -55,7 +73,7 @@ def _build_router(
         if tenant is None:
             await target.answer("Бот временно недоступен.")
             return
-        await target.answer(texts.welcome(tenant), reply_markup=keyboards.main_menu_kb())
+        await target.answer(texts.welcome(tenant), reply_markup=_menu_kb())
 
     @router.message(CommandStart())
     async def handle_start(message: Message, state: FSMContext) -> None:
@@ -64,10 +82,12 @@ def _build_router(
 
     @router.message(Command("cancel"))
     async def handle_cancel(message: Message, state: FSMContext) -> None:
+        current = await state.get_state()
         await state.clear()
-        await message.answer(
-            "Окей, отменил.", reply_markup=keyboards.main_menu_kb()
-        )
+        if current == Support.chatting.state:
+            await message.answer(texts.SUPPORT_LEFT, reply_markup=_menu_kb())
+            return
+        await message.answer("Окей, отменил.", reply_markup=_menu_kb())
 
     # ---------------- Menu ----------------
 
@@ -99,6 +119,97 @@ def _build_router(
         if tenant is None:
             return
         await message.answer(texts.about_text(tenant))
+
+    # ---------------- Support chat (Claude) ----------------
+
+    if support_enabled:
+        # Type-narrowing for the closure: support_enabled implies non-None.
+        client: ClaudeClient = cast(ClaudeClient, claude_client)
+        history_limit = max(1, claude_history_limit)
+        # Each (user, assistant) pair is two messages.
+        max_history_messages = history_limit * 2
+
+        @router.message(F.text == keyboards.SUPPORT_BUTTON_TEXT)
+        async def enter_support(message: Message, state: FSMContext) -> None:
+            await state.clear()
+            await state.set_state(Support.chatting)
+            await state.update_data(history=[])
+            await message.answer(
+                texts.SUPPORT_INTRO,
+                reply_markup=keyboards.support_chat_kb(),
+            )
+
+        @router.message(Support.chatting, F.text == keyboards.SUPPORT_EXIT_TEXT)
+        async def exit_support(message: Message, state: FSMContext) -> None:
+            await state.clear()
+            await message.answer(texts.SUPPORT_LEFT, reply_markup=_menu_kb())
+
+        @router.message(Support.chatting)
+        async def support_message(message: Message, state: FSMContext) -> None:
+            user_text = (message.text or "").strip()
+            if not user_text:
+                await message.answer(texts.SUPPORT_EMPTY_INPUT)
+                return
+
+            data = await state.get_data()
+            raw_history = data.get("history") or []
+            history: list[ChatMessage] = []
+            for item in raw_history:
+                if (
+                    isinstance(item, dict)
+                    and isinstance(item.get("role"), str)
+                    and isinstance(item.get("content"), str)
+                ):
+                    history.append(
+                        ChatMessage(role=item["role"], content=item["content"])
+                    )
+
+            history.append(ChatMessage(role="user", content=user_text))
+            # Keep only the most recent N messages (sliding window).
+            trimmed = history[-max_history_messages:]
+
+            async with sessionmaker() as session:
+                tenant = await repo.get_tenant(session, tenant_id)
+            if tenant is None:
+                await state.clear()
+                await message.answer(
+                    "Бот временно недоступен.", reply_markup=_menu_kb()
+                )
+                return
+
+            system_prompt = (
+                claude_system_prompt_override
+                if claude_system_prompt_override
+                else texts.support_system_prompt(tenant)
+            )
+
+            try:
+                reply_text = await client.send(trimmed, system=system_prompt)
+            except ClaudeAllKeysExhaustedError as exc:
+                logger.warning(
+                    "Claude keys exhausted for tenant %s: %s", tenant_id, exc
+                )
+                await message.answer(texts.SUPPORT_UNAVAILABLE)
+                return
+            except ClaudeAPIError as exc:
+                logger.warning(
+                    "Claude API error for tenant %s: %s", tenant_id, exc
+                )
+                await message.answer(texts.SUPPORT_BACKEND_ERROR)
+                return
+            except ClaudeError as exc:
+                logger.warning(
+                    "Claude error for tenant %s: %s", tenant_id, exc
+                )
+                await message.answer(texts.SUPPORT_BACKEND_ERROR)
+                return
+
+            trimmed.append(ChatMessage(role="assistant", content=reply_text))
+            trimmed = trimmed[-max_history_messages:]
+            await state.update_data(
+                history=[m.to_api() for m in trimmed]
+            )
+            await message.answer(reply_text)
 
     # ---------------- Booking ----------------
 
@@ -266,6 +377,9 @@ def make_child_dispatcher_factory(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     notifier: Notifier,
+    claude_client: ClaudeClient | None = None,
+    claude_history_limit: int = 10,
+    claude_system_prompt_override: str | None = None,
 ) -> Callable[[int], Dispatcher]:
     """Return a callable that builds a fresh :class:`Dispatcher` per tenant."""
 
@@ -276,6 +390,9 @@ def make_child_dispatcher_factory(
                 tenant_id=tenant_id,
                 sessionmaker=sessionmaker,
                 notifier=notifier,
+                claude_client=claude_client,
+                claude_history_limit=claude_history_limit,
+                claude_system_prompt_override=claude_system_prompt_override,
             )
         )
         return dp
